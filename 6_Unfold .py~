@@ -1,0 +1,118 @@
+import numpy as np
+import ROOT
+import pylab
+import pandas
+import random
+import rootplot.root2matplotlib as r2m
+from matplotlib import pyplot as plt
+from ROOT import RooUnfoldResponse
+
+# Definisco la funzione di I per 2 fenditure .
+def doppia_fenditura (x , I_0 , a , L , lungh_onda) :
+    return I_0 * np . power (( lungh_onda * L * np.sin ( np.pi * a * x /( lungh_onda * L ) ) /( np.pi * a * x ) *( np.sin ( np.pi * 2 * 0.001 * x /( lungh_onda * L ) ) ) /( np.sin ( np.pi * 0.001 * x /(lungh_onda * L ) ) ) ) , 2)
+
+# Ridefinisco la funzione di I per N fenditure per ROOT .
+def doppia_fenditura_root (x , parametri ) :
+    return doppia_fenditura ( x[0] , parametri[0] , parametri[1] ,parametri [2] , parametri[3])
+
+# Costanti
+e = 10
+x_min = -0.02
+x_max = +0.025
+I_0 = 1.
+L = 5.
+a = 0.0005 
+lungh_onda = 0.0000006328
+num_bins = 45
+n = 50000
+
+# Creo l oggetto TF1 e imposto i parametri .
+funzione_doppia_fenditura = ROOT.TF1 ("funzione_doppia_fenditura", doppia_fenditura_root , x_min , x_max , 4)
+funzione_doppia_fenditura.SetParameters (I_0 , a , L , lungh_onda)
+
+# Creo l istogramma per i dati "veri".
+histo = ROOT.TH1F("h", "Histo", num_bins , x_min , x_max)
+c = ROOT.TCanvas("c")
+    
+# Creo lo spettro incidente generando n eventi e riempiendo l  istogramma .
+for i in range( n ):
+    x_i = funzione_doppia_fenditura.GetRandom(x_min , x_max)
+    histo.Fill(x_i)
+    
+histo.Draw()
+c.Draw()
+c.SaveAs("doppia_fenditura_originale.png")
+
+# Inizializzazioni .
+mu_smear = 0.0
+c = 100000
+Delta_x = (x_max - x_min)/num_bins
+
+# Creo listogramma per i dati " misurati ".
+d = ROOT.TCanvas("d")
+histo_smeared = ROOT.TH1F("Smeared", "Smeared", num_bins , x_min , x_max)
+
+# Applico lo smearing gaussiano ai dati generati in precedenza e riempio un secondo istogramma .
+for i in range(n):
+    x_i_measured = x_i + random.gauss(mu_smear , (c*Delta_x))
+    histo_smeared.Fill(x_i_measured)
+    
+histo_smeared.Draw()
+d.Draw()
+d.SaveAs("histo_smeared.png")
+
+# Inizializzione 
+n_t = 1000000
+iterazione = 1
+
+e = ROOT.TCanvas("e")
+# Creo un istogramma per lo spettro uniforme " vero " e un istogramma per lo spettro uniforme " misurato ".
+histo_risp = ROOT.TH1F("Response_true","Response_true", num_bins , x_min , x_max)
+histo_smeared_risp = ROOT.TH1F("Response_smeared" ,"Response_smeared" , num_bins , x_min , x_max)
+
+# Creo la matrice di risposta .
+response = ROOT.RooUnfoldResponse(histo_smeared_risp ,histo_risp) ;
+# Genero i due spettri e riempio la matrice di risposta .
+for i in range (n_t):
+    x_i_risp = random.uniform(x_min , x_max)
+    x_i_measured_risp = random.gauss(x_i_risp , ( c * Delta_x ))
+    response.Fill(x_i_measured_risp , x_i_risp)
+
+plt.figure(1, (8, 6))
+ax1 = plt.axes()
+    
+# Applico l unfolding bayesiano ai dati ottenuti precedentemente a seguito dello smearing gaussiano .
+unfold_bayes = ROOT.RooUnfoldBayes(response , histo_smeared , 1 , False )
+Unfold_bayes = r2m.Hist(unfold_bayes.Hreco() , label = "Unfolded" ) 
+
+Unfold_bayes.bar(color='r')
+Unfold_bayes.show_titles()
+plt.savefig('Unfolded_initial')
+#plt.show()
+
+# Recupero il valore di chi quadro .
+#chi2 = unfold_bayes.Chi2
+
+plt.clf()
+plt.figure(1, (8, 6))
+ax2 = plt.axes()
+
+# Ciclo di unfolding .
+while (iterazione < 50):
+    #Resetto e imposto nuovamente i parametri dell unfolding .
+    unfold_bayes.Reset ()
+    unfold_bayes.SetResponse (response)
+    unfold_bayes.SetMeasured (histo_smeared)
+    unfold_bayes.SetIterations (iterazione)
+    unfold_bayes.SetSmoothing(False)
+    #Applico l  unfolding .
+    Unfold_bayes = r2m.Hist ( unfold_bayes.Hreco() ,label = "Unfolded")
+    #Recupero di nuovo il valore di chi quadro .
+    #chi2 = unfold_bayes.Chi2
+    #Incremento il contatore delle iterazioni .
+    iterazione += 1
+
+Unfold_bayes.bar(color='r')
+Unfold_bayes.show_titles()
+plt.savefig('Unfolded_final')
+#plt.show()
